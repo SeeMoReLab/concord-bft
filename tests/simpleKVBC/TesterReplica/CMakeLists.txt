@@ -8,7 +8,10 @@ add_executable(skvbc_replica main.cpp
 		 strategy/ShufflePrePrepareMsgStrategy.cpp
 		 strategy/StrategyUtils.cpp
 		 strategy/MangledPreProcessResultMsgStrategy.cpp
-		 strategy/CorruptCheckpointMsgStrategy.cpp)
+		 strategy/CorruptCheckpointMsgStrategy.cpp
+		 strategy/ByzantineFaultConfig.cpp
+		 strategy/ByzantinePrePrepareStrategy.cpp
+		 strategy/AdaptiveTimerManager.cpp)
 
 if(${USE_COMM_PLAIN_TCP})
 	target_compile_definitions(skvbc_replica PUBLIC USE_COMM_PLAIN_TCP)
@@ -22,7 +25,8 @@ if(BUILD_ROCKSDB_STORAGE)
 	target_compile_definitions(skvbc_replica PUBLIC "USE_ROCKSDB=1")
 endif()
 
-target_link_libraries(skvbc_replica PUBLIC kvbc corebft threshsign util concord-crypto test_config_lib stdc++fs skvbc_messages_cmf)
+find_package(nlohmann_json REQUIRED)
+target_link_libraries(skvbc_replica PUBLIC kvbc corebft threshsign util concord-crypto test_config_lib stdc++fs skvbc_messages_cmf nlohmann_json::nlohmann_json adaptive-timers-proto)
 
 target_include_directories(skvbc_replica PUBLIC ..)
 target_include_directories(skvbc_replica PUBLIC ../..)

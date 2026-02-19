@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <bitset>
 #include <limits>
@@ -1184,14 +1185,16 @@ void ReplicaImp::tryToStartSlowPaths() {
 
     const Time timeOfPartProof = seqNumInfo.getFastPathTimeOfSelfPartialProof();
 
-    if (currTime - timeOfPartProof < milliseconds(controller->timeToStartSlowPathMilli())) break;
+    auto adaptiveTimeout = config_.get("concord.bft.adaptive.slowPathTimeout", uint32_t{0});
+    auto slowPathThreshold = adaptiveTimeout > 0 ? adaptiveTimeout : controller->timeToStartSlowPathMilli();
+    if (currTime - timeOfPartProof < milliseconds(slowPathThreshold)) break;
     SCOPED_MDC_SEQ_NUM(std::to_string(i));
     SCOPED_MDC_PATH(CommitPathToMDCString(CommitPath::SLOW));
     LOG_INFO(CNSUS,
              "Primary initiates slow path for seqNum="
                  << i << " (currTime=" << duration_cast<microseconds>(currTime.time_since_epoch()).count()
                  << " timeOfPartProof=" << duration_cast<microseconds>(timeOfPartProof.time_since_epoch()).count()
-                 << " threshold for degradation [" << controller->timeToStartSlowPathMilli() << "ms]");
+                 << " threshold for degradation [" << slowPathThreshold << "ms]");
 
     controller->onStartingSlowCommit(i);
 
@@ -2158,6 +2161,22 @@ void ReplicaImp::onFastPathCommitCombinedSigSucceeded(SeqNum seqNumber,
   }
 
   SeqNumInfo &seqNumInfo = mainLog->get(seqNumber);
+
+  // Byzantine fault injection: delay fast path completion until slow-path timeout boundary
+  if (config_.get("concord.bft.byz.delayFastPath", false)) {
+    auto timeOfPartProof = seqNumInfo.getFastPathTimeOfSelfPartialProof();
+    auto now = getMonotonicTime();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - timeOfPartProof);
+    auto adaptiveSlowPath = config_.get("concord.bft.adaptive.slowPathTimeout", uint32_t{0});
+    auto target = std::chrono::milliseconds(
+        adaptiveSlowPath > 0 ? adaptiveSlowPath : controller->timeToStartSlowPathMilli());
+    if (elapsed < target) {
+      LOG_INFO(CNSUS,
+               "Byzantine: delaying fast path completion by " << (target - elapsed).count()
+                                                              << " ms for seqNum=" << seqNumber);
+      std::this_thread::sleep_for(target - elapsed);
+    }
+  }
 
   FullCommitProofMsg *fcp = seqNumInfo.getFastPathFullCommitProofMsg();
   // One replica produces FullCommitProofMsg Immediately
@@ -3882,9 +3901,11 @@ void ReplicaImp::onStatusReportTimer(Timers::Handle timer) {
 void ReplicaImp::onSlowPathTimer(Timers::Handle timer) {
   if (bftEngine::ControlStateManager::instance().getPruningProcessStatus()) return;
   tryToStartSlowPaths();
-  auto newPeriod = milliseconds(controller->slowPathsTimerMilli());
-  timers_.reset(timer, newPeriod);
-  metric_slow_path_timer_.Get().Set(controller->slowPathsTimerMilli());
+  auto adaptiveTimeout = config_.get("concord.bft.adaptive.slowPathTimeout", uint32_t{0});
+  auto newPeriodMs = adaptiveTimeout > 0 ? std::max(adaptiveTimeout / 2, uint32_t{10})
+                                         : controller->slowPathsTimerMilli();
+  timers_.reset(timer, milliseconds(newPeriodMs));
+  metric_slow_path_timer_.Get().Set(newPeriodMs);
 }
 
 void ReplicaImp::onInfoRequestTimer(Timers::Handle timer) {

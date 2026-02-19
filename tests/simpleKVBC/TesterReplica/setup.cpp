@@ -42,6 +42,8 @@
 #include "strategy/CorruptCheckpointMsgStrategy.hpp"
 #include "strategy/DelayStateTransferMsgStrategy.hpp"
 #include "strategy/MangledPreProcessResultMsgStrategy.hpp"
+#include "strategy/ByzantineFaultConfig.hpp"
+#include "strategy/ByzantinePrePrepareStrategy.hpp"
 #include "WrapCommunication.hpp"
 #include "blockchain_misc.hpp"
 
@@ -109,6 +111,9 @@ std::unique_ptr<TestSetup> TestSetup::ParseArgs(int argc, char** argv) {
         {"delay-state-transfer-messages-millisec", required_argument, 0, 2},
         {"corrupt-checkpoint-messages-from-replica-ids", required_argument, 0, 2},
         {"diagnostics-port", required_argument, 0, 2},
+        {"byzantine-fault-config", required_argument, 0, 2},
+        {"learning-agent-addr", required_argument, 0, 2},
+        {"adaptive-timer-iterations", required_argument, 0, 2},
 
         // long/short format options
         {"replica-id", required_argument, 0, 'i'},
@@ -203,6 +208,33 @@ std::unique_ptr<TestSetup> TestSetup::ParseArgs(int argc, char** argv) {
                     "Invalid value for argument --diagnostics-port, argument should be"
                     "a valid available port number"};
               }
+            } break;
+            case 3: {
+              std::string configPath{optarg};
+              auto& bzConfig = concord::kvbc::strategy::ByzantineFaultConfig::instance();
+              bzConfig.load(configPath);
+              LOG_INFO(GL, "Loaded byzantine fault config from: " << configPath);
+              if (bzConfig.hasAnyDelayPropose() || bzConfig.hasAnySkipFastPath() || bzConfig.hasAnyDelayFastPath()) {
+                if (byzantineStrategies.empty()) {
+                  byzantineStrategies = "ByzantinePrePrepareStrategy";
+                } else {
+                  byzantineStrategies += ",ByzantinePrePrepareStrategy";
+                }
+              }
+            } break;
+            case 4: {
+              replicaConfig.set("concord.bft.adaptive.agentAddr", std::string{optarg});
+              LOG_INFO(GL, "Learning agent address: " << optarg);
+              // Ensure ByzantinePrePrepareStrategy is registered for the adaptive timer hook
+              if (byzantineStrategies.empty()) {
+                byzantineStrategies = "ByzantinePrePrepareStrategy";
+              } else if (byzantineStrategies.find("ByzantinePrePrepareStrategy") == std::string::npos) {
+                byzantineStrategies += ",ByzantinePrePrepareStrategy";
+              }
+            } break;
+            case 5: {
+              replicaConfig.set("concord.bft.adaptive.iterationCount", std::string{optarg});
+              LOG_INFO(GL, "Adaptive timer iterations: " << optarg);
             } break;
             default: {
               std::ostringstream ss;
@@ -406,7 +438,8 @@ std::unique_ptr<TestSetup> TestSetup::ParseArgs(int argc, char** argv) {
           std::make_shared<concord::kvbc::strategy::MangledPreProcessResultMsgStrategy>(logger),
           std::make_shared<concord::kvbc::strategy::DelayStateTransferMsgStrategy>(logger, stateTransferMsgDelayMs),
           std::make_shared<concord::kvbc::strategy::CorruptCheckpointMsgStrategy>(logger,
-                                                                                  std::move(byzantineReplicaIds))};
+                                                                                  std::move(byzantineReplicaIds)),
+          std::make_shared<concord::kvbc::strategy::ByzantinePrePrepareStrategy>(logger)};
       WrapCommunication::addStrategies(byzantineStrategies, ',', allStrategies);
 
       std::unique_ptr<bft::communication::ICommunication> wrappedComm =

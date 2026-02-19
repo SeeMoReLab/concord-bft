@@ -14,6 +14,8 @@
 #include "setup.hpp"
 #include "Replica.h"
 #include "internalCommandsHandler.hpp"
+#include "strategy/ByzantineFaultConfig.hpp"
+#include "strategy/AdaptiveTimerManager.hpp"
 #include "replica_state_sync_imp.hpp"
 #include "block_metadata.hpp"
 #include "SimpleBCStateTransfer.hpp"
@@ -151,6 +153,21 @@ void run_replica(int argc, char** argv) {
                                                 replica->kvBlockchain() ? &replica->kvBlockchain().value() : nullptr);
   replica->set_command_handler(cmdHandler);
   replica->setStateSnapshotValueConverter([](std::string&& v) -> std::string { return std::move(v); });
+  if (concord::kvbc::strategy::ByzantineFaultConfig::instance().isLoaded()) {
+    concord::kvbc::strategy::ByzantineFaultConfig::instance().start();
+  }
+
+  // Initialize adaptive timer manager if configured
+  {
+    auto& rc = bftEngine::ReplicaConfig::instance();
+    auto agentAddr = rc.get("concord.bft.adaptive.agentAddr", std::string{});
+    auto iterStr = rc.get("concord.bft.adaptive.iterationCount", std::string{});
+    uint64_t iterCount = iterStr.empty() ? 0 : std::stoull(iterStr);
+    if (!agentAddr.empty() && iterCount > 0) {
+      concord::kvbc::strategy::AdaptiveTimerManager::instance().init(agentAddr, iterCount);
+    }
+  }
+
   replica->start();
 
   auto& replicaConfig = setup->GetReplicaConfig();

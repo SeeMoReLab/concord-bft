@@ -1,4 +1,5 @@
 add_subdirectory(cmf)
+add_subdirectory(proto)
 add_subdirectory(TesterClient)
 add_subdirectory(TesterReplica)
 add_subdirectory(TesterCRE)
