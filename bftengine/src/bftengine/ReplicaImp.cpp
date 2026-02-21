@@ -3831,7 +3831,16 @@ void ReplicaImp::onViewsChangeTimer(Timers::Handle timer)  // TODO(GG): review/u
   //
   //////////////////////////////////////////////////////////////////////////////
 
-  uint64_t viewChangeTimeout = viewChangeTimerMilli;
+  auto adaptiveViewChange = config_.get("concord.bft.adaptive.viewChangeTimeout", uint32_t{0});
+  uint64_t viewChangeTimeout = adaptiveViewChange > 0 ? adaptiveViewChange : viewChangeTimerMilli;
+  {
+    uint64_t newPeriodMs = viewChangeTimeout / 2;
+    if (autoPrimaryRotationEnabled && newPeriodMs > static_cast<uint64_t>(autoPrimaryRotationTimerMilli))
+      newPeriodMs = static_cast<uint64_t>(autoPrimaryRotationTimerMilli);
+    newPeriodMs = std::max(newPeriodMs, uint64_t{10});
+    timers_.reset(timer, milliseconds(newPeriodMs));
+    metric_viewchange_timer_.Get().Set(newPeriodMs);
+  }
   if (autoIncViewChangeTimer && ((lastViewThatTransferredSeqNumbersFullyExecuted + 1) < getCurrentView())) {
     uint64_t factor = (getCurrentView() - lastViewThatTransferredSeqNumbersFullyExecuted);
     viewChangeTimeout = viewChangeTimeout * factor;  // TODO(GG): review logic here

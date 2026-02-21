@@ -52,7 +52,7 @@ class RequestsBatchingLogic {
   std::chrono::steady_clock::time_point start_timer_ = std::chrono::steady_clock::now();
   const uint32_t batchingFactorCoefficient_;
   const uint32_t maxInitialBatchSize_;
-  const uint32_t batchFlushPeriodMs_;
+  uint32_t batchFlushPeriodMs_;
   uint16_t closedOnLogic_ = 0;
   uint16_t closedOnFlush_ = 0;
   uint32_t maxNumOfRequestsInBatch_;

@@ -6,37 +6,30 @@
 # Metrics are fetched from each replica's UDP metrics server after the test.
 #
 
-#cd build
-
-# 1. Generate key files
-#./tools/GenerateConcordKeys -n 4 -f 1 -r 0 -o tests/simpleKVBC/scripts/setA_replica_
-
-# 2. Generate TLS certs
-#cd tests/simpleKVBC/scripts
-# concord-bft/scripts/linux/create_tls_certs.sh 5
-
-# 3. Clean any stale state
-#rm -rf simpleKVBTests_DB_*
-
-# 4. cd /concord-bft
-# make login
-
-# 5. Run the test
-# cd concord-bft/build/tests/simpleKVBC/scripts
-# concord-bft/tests/simpleKVBC/scripts/run_byzantine_test.sh
-
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FAULT_CONFIG="${1:-$SCRIPT_DIR/../TesterReplica/strategy/byzantine_fault_config.json}"
 NUM_OPS="${2:-1800}"
+ADAPTIVE_ITERATIONS="${3:-200}"
 LOG_DIR="${SCRIPT_DIR}/logs_$(date +%Y%m%dT%H%M%S)"
+
+# Replica network layout:
+#   id  address    consensus-port  client-port  agent-port  data-exchange-port
+#   0   127.0.0.1  11000           10000        50000       55000
+#   1   127.0.0.1  11001           10001        50001       55001
+#   2   127.0.0.1  11002           10002        50002       55002
+#   3   127.0.0.1  11003           10003        50003       55003
+REPLICA_ADDR="localhost"
+AGENT_PORTS=(50000 50001 50002 50003)
+DATA_EXCHANGE_PORTS=(55000 55001 55002 55003)
 
 mkdir -p "$LOG_DIR"
 
 echo "=== Byzantine Fault Test ==="
 echo "Fault config: $FAULT_CONFIG"
 echo "Num operations: $NUM_OPS"
+echo "Adaptive iterations: $ADAPTIVE_ITERATIONS"
 echo "Log dir: $LOG_DIR"
 echo ""
 
@@ -45,18 +38,46 @@ echo "Killing any leftover replicas/clients..."
 killall skvbc_replica skvbc_client 2>/dev/null || true
 sleep 1
 
+# Verify learning agents are reachable before starting replicas
+echo "Checking learning agents are reachable..."
+for id in 0 1 2 3; do
+  port="${AGENT_PORTS[$id]}"
+  if ! python3 -c "
+import socket, sys
+s = socket.socket()
+s.settimeout(2)
+try:
+    s.connect(('localhost', $port))
+    s.close()
+    sys.exit(0)
+except Exception as e:
+    print(f'Agent {$id} not reachable on port $port: {e}', file=sys.stderr)
+    sys.exit(1)
+"; then
+    echo "ERROR: learning agent $id is not running on ${REPLICA_ADDR}:${port}"
+    echo "Start all agents before running this script."
+    exit 1
+  fi
+done
+echo "All agents reachable."
+echo ""
+
 # Start replicas
 # Replica 0: Byzantine (with fault config)
-echo "Starting replica 0 (BYZANTINE)..."
+echo "Starting replica 0 (BYZANTINE, agent=${REPLICA_ADDR}:${AGENT_PORTS[0]})..."
 ../TesterReplica/skvbc_replica -k setA_replica_ -i 0 \
   --byzantine-fault-config "$FAULT_CONFIG" \
+  --learning-agent-addr "${REPLICA_ADDR}:${AGENT_PORTS[0]}" \
+  --adaptive-timer-iterations "$ADAPTIVE_ITERATIONS" \
   > "$LOG_DIR/replica_0.log" 2>&1 &
 PIDS[0]=$!
 
 # Replicas 1-3: Honest
 for id in 1 2 3; do
-  echo "Starting replica $id (honest)..."
+  echo "Starting replica $id (honest, agent=${REPLICA_ADDR}:${AGENT_PORTS[$id]})..."
   ../TesterReplica/skvbc_replica -k setA_replica_ -i $id \
+    --learning-agent-addr "${REPLICA_ADDR}:${AGENT_PORTS[$id]}" \
+    --adaptive-timer-iterations "$ADAPTIVE_ITERATIONS" \
     > "$LOG_DIR/replica_${id}.log" 2>&1 &
   PIDS[$id]=$!
 done

@@ -47,6 +47,8 @@ RequestsBatchingLogic::~RequestsBatchingLogic() {
 }
 
 void RequestsBatchingLogic::onBatchFlushTimer(Timers::Handle) {
+  auto adaptiveBatchFlush = bftEngine::ReplicaConfig::instance().get("concord.bft.adaptive.batchFlushTimeout", uint32_t{0});
+  if (adaptiveBatchFlush > 0) batchFlushPeriodMs_ = adaptiveBatchFlush;
   if (replica_.isCurrentPrimary()) {
     lock_guard<mutex> lock(batchProcessingLock_);
     if (replica_.tryToSendPrePrepareMsg(false)) {
